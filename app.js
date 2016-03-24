@@ -1,6 +1,6 @@
 'use strict';
 
-var dbCount = 0;
+var dbCount;
 
 var express = require('express');
 var mongo = require('mongodb').MongoClient;
@@ -9,24 +9,26 @@ var https = require('https');
 var app = express();
 require('dotenv').load();
 
+var insertDefault = function(coll,callback) {
+	var web1 = {short: 1, original: 'https://www.google.com'};
+	var web2 = {short: 2, original: 'https://www.facebook.com'};
+	coll.insert([web1,web2],function(err, result) {
+		if (err) {throw err;} 
+		else {dbCount = 2; callback();}
+	})
+}
+
 mongo.connect(process.env.MONGO_URI, function (err, db) {
   if (err) {
     console.log('Unable to connect to the mongoDB server. Error:', err);
   } else {
     console.log('Connection established to ' + process.env.MONGO_URI + '\n');
     var websites = db.collection('websites');
+    dbCount = 0;
 	websites.remove({});
-	//console.log('All gone.');
-	var web1 = {short: 1, original: 'https://www.google.com'};
-	var web2 = {short: 2, original: 'https://www.facebook.com'};
-	websites.insert([web1, web2], function (err, result) {
-		if (err) {
-			throw err;
-		} else {
-			dbCount = 2;
-			db.close();
-		}
-	});
+	insertDefault(websites,function(){
+		db.close();
+	})
   }
 });
 
@@ -45,24 +47,25 @@ app.get('/favicon.ico', function (req, res) {
 app.get('/*', function (req, res) {
 	var received = req.params[0];
 	if (received > 0 && received <= dbCount) {
+		console.log('Existing redirect reference "'+ received + '" received. Redirecting...');
 		redirectL(received, function (redirectTo) {
 			res.redirect(redirectTo);
 		})
-		console.log('You found a winner.');
-	}
-	received = received.replace('http', 'https');
-	console.log('Instruction received: ' + received);
+	} else {
+		received = received.replace('http:', 'https:'); //Change to accept https
+		console.log('Instruction received: ' + received);
 	
-	validLink(received, function (valid) {
-		if (valid) {
-			addToDB(received, function (position) {
-				res.send("URL Valid. Link at: " + position);
-			});
-		} else {
-			res.send("Error: URL invalid: " + received);
-			console.log("Error: URL invalid: " + received);
-		}
-	});
+		validLink(received, function (valid) {
+			if (valid) {
+				addToDB(received, function (position) {
+					res.send("URL Valid. Link at: https://fcc-url-shortener-microservice-tiaan999.c9users.io/" + position);
+				});
+			} else {
+				res.send("Error: URL invalid: " + received);
+				console.log("Error: URL invalid: " + received);
+			}
+		});
+	}
 });
 
 var port = process.env.PORT;
@@ -72,7 +75,7 @@ app.listen(port,  function () {
 
 function validLink(link, callback) {
 	console.log('validLink function received: ' + link);
-	var req  = https.request(link, function (res) {
+	var req = https.request(link, function (res) {
 		console.log('Response: ' + res.statusCode);
 		if ((res.statusCode === 200) || (res.statusCode === 301) || (res.statusCode === 302)) {
 			console.log("URL Valid");
@@ -89,7 +92,10 @@ function validLink(link, callback) {
 	
 	req.end();
 	req.on('error', (e) => {
-  		console.error(e);
+  		//console.error(e);
+  		if(typeof callback == "function") {
+			callback(false);
+		}
 	});
 }
 	
@@ -106,7 +112,6 @@ function addToDB(link, callback) {
 				if (err) {
 					throw err;	
 				} else {
-					//console.log(items[0]);
 					if (items[0] === undefined) {
 						//Add to DB
 						dbCount++;
@@ -143,25 +148,19 @@ function redirectL(ref, callback) {
 			console.log('Connection established to ' + process.env.MONGO_URI);
 			var collection = db.collection('websites');
 			
-			//collection.count(function (err, count) {
-			//	if (err) {
-			//		throw err;
-			//	} else {
-			//		console.log(count);
-			//	}
-			//});
-			
-			//Determine if link is in DB
-			collection.find({'short': Number(ref)}, {"_id": 0, 'original': 1}, function (err, items) {
+			//Find original URL in DB
+			collection.findOne({'short': Number(ref)}, {"_id": 0, 'original': 1}, function (err, item) {
 				if (err) {
 					throw err;	
 				} else {
-					//Print position in DB
-					console.log(items);
+					//Print original URL
+					var url = item.original;
+					console.log("Original URL: " + url);
 					db.close();
 					
+					//Callback original URL
 					if(typeof callback == "function") {
-						callback(items);
+						callback(url);
 					}
 				}
 			});
